@@ -11,7 +11,9 @@ let profile = null;
 let token = localStorage.getItem(STORAGE_TOKEN);
 let bookings = [];
 let groups = [];
+let dailyBookingLimit = { limit: 3, used: 0, remaining: 3 };
 let toastTimer;
+let reminderTimers = [];
 
 async function api(path, options = {}) {
   const headers = {
@@ -75,7 +77,10 @@ async function showApp() {
 
   try {
     await loadGroups();
+    await loadTeachers();
     await loadBookings();
+    await loadDailyBookingLimit();
+    scheduleSessionReminders();
     renderGroups();
     renderBookings();
     renderStats();
@@ -135,13 +140,33 @@ async function loadGroups() {
 
   groups = data.groups.map(g => ({
     id: Number(g.id),
+    teacherId: g.teacher_id,
     name: g.name,
     day: g.weekday === "friday" ? "الجمعة" : "السبت",
     dayKey: g.weekday,
     start: g.start_time,
     end: g.end_time,
-    price: Number(g.price_dzd)
+    price: Number(g.price_dzd),
+    teacherName: g.teacher_name || "الأستاذ",
+    subject: g.subject || ""
   }));
+}
+
+async function loadTeachers() {
+  const data = await api("/api/teachers");
+  const teachers = data.teachers || [];
+  const container = $("teacherList");
+  if (!container) return;
+  $("teacherCount").textContent = teachers.length;
+  container.innerHTML = teachers.map(t => {
+    const teacherGroups = groups.filter(g => g.teacherId === t.id);
+    return `<article class="teacher-card">
+      <div class="teacher-avatar">${escapeHtml((t.name || "أ").slice(0,1))}</div>
+      <div class="teacher-info"><h3>${escapeHtml(t.name)}</h3>
+      <p>${escapeHtml(t.subject)} · ${escapeHtml(t.education_level)}</p>
+      <div class="teacher-tags"><span>${teacherGroups.length} أفواج متاحة</span></div></div>
+    </article>`;
+  }).join("") || "<p>لا يوجد أساتذة متاحون حالياً.</p>";
 }
 
 // جلب اشتراكات التلميذ الحقيقية
@@ -156,9 +181,19 @@ async function loadBookings() {
     start: b.start_time,
     end: b.end_time,
     price: Number(b.price_dzd),
+    teacherName: b.teacher_name || "الأستاذ",
+    groupName: b.group_name || `الفوج ${b.group_id}`,
     status: b.status,
     paymentStatus: b.payment_status
   }));
+}
+
+async function loadDailyBookingLimit() {
+  dailyBookingLimit = await api("/api/bookings/daily-limit");
+  const status = $("dailyBookingLimit");
+  if (status) {
+    status.textContent = `سجلت اليوم في ${dailyBookingLimit.used} من أصل 3 أفواج · المتبقي ${dailyBookingLimit.remaining}`;
+  }
 }
 
 function renderGroups() {
@@ -173,14 +208,15 @@ function renderGroups() {
         <span class="group-day">${g.day}</span>
       </div>
       <h4>${escapeHtml(g.name || `فوج البكالوريا ${g.id}`)}</h4>
+      <p class="group-teacher">${escapeHtml(g.teacherName)} · ${escapeHtml(g.subject)}</p>
       <div class="group-time">◷ ${g.start} — ${g.end}</div>
       <div class="group-bottom">
         <div class="price">${g.price}
           <small>دج / الحصة</small>
         </div>
         <button class="join-button" data-join="${g.id}"
-          ${alreadyBooked ? "disabled" : ""}>
-          ${alreadyBooked ? "تم التسجيل" : "اشترك في الحصة"}
+          ${(alreadyBooked || dailyBookingLimit.remaining <= 0) ? "disabled" : ""}>
+          ${alreadyBooked ? "تم التسجيل" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة")}
         </button>
       </div>
     </article>`;
@@ -262,6 +298,8 @@ async function joinGroup(id) {
     });
 
     await loadBookings();
+    await loadDailyBookingLimit();
+    scheduleSessionReminders();
     renderGroups();
     renderBookings();
     renderStats();
@@ -291,7 +329,7 @@ function renderBookings() {
     <article class="booking-item">
       <div class="booking-date">▤</div>
       <div class="booking-details">
-        <strong>الأستاذ بومدين · الفوج ${b.groupId}</strong>
+        <strong>${escapeHtml(b.teacherName)} · ${escapeHtml(b.groupName)}</strong>
         <p>${b.sessionDate} · ${b.day} · ${b.start} إلى ${b.end} · ${b.price} دج</p>
       </div>
       <span class="booking-status">تم التسجيل</span>
@@ -373,16 +411,53 @@ $("reminderToggle").addEventListener("change", async (event) => {
     String(event.target.checked)
   );
 
+  scheduleSessionReminders();
   showToast(
     event.target.checked
-      ? "تم تفعيل إذن التذكيرات على هذا الجهاز."
+      ? "تم تفعيل التذكيرات أثناء بقاء المنصة مفتوحة."
       : "تم إيقاف التذكيرات."
   );
 });
 
-$("notificationButton").addEventListener("click", () =>
-  showToast("لا توجد إشعارات جديدة حالياً.")
-);
+$("notificationButton").addEventListener("click", async () => {
+  try {
+    const data = await api("/api/notifications");
+    const items = data.notifications || [];
+    if (!items.length) {
+      showToast("لا توجد إشعارات جديدة.");
+      return;
+    }
+    const latest = items.slice(0, 5).map(item =>
+      `${item.title}\\n${item.message}`
+    ).join("\\n\\n");
+    alert(latest);
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
+function scheduleSessionReminders() {
+  reminderTimers.forEach(timer => clearTimeout(timer));
+  reminderTimers = [];
+  if (localStorage.getItem(STORAGE_REMINDER) !== "true" ||
+      !("Notification" in window) || Notification.permission !== "granted") return;
+
+  for (const booking of bookings) {
+    const sessionStart = new Date(`${booking.sessionDate}T${booking.start}:00+01:00`);
+    const reminderAt = sessionStart.getTime() - 30 * 60 * 1000;
+    const delay = reminderAt - Date.now();
+    // مؤقت محلي يعمل فقط ما دامت الصفحة مفتوحة؛ Web Push مطلوب للتذكير بعد إغلاقها.
+    if (delay > 0 && delay <= 2147480000) {
+      const timer = setTimeout(() => {
+        new Notification("تذكير بموعد حصتك", {
+          body: `لديك حصة ${booking.groupId} بعد 30 دقيقة.`,
+          tag: `booking-${booking.id}`
+        });
+      }, delay);
+      reminderTimers.push(timer);
+    }
+  }
+}
 
 // تشغيل التطبيق
 async function startApp() {
