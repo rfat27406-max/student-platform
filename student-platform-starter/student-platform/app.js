@@ -14,6 +14,8 @@ let groups = [];
 let dailyBookingLimit = { limit: 3, used: 0, remaining: 3 };
 let toastTimer;
 let reminderTimers = [];
+let knownNotificationIds = new Set();
+let notificationPollTimer = null;
 
 async function api(path, options = {}) {
   const headers = {
@@ -80,6 +82,8 @@ async function showApp() {
     await loadTeachers();
     await loadBookings();
     await loadDailyBookingLimit();
+    await refreshNotifications(false);
+    scheduleNotificationPolling();
     scheduleSessionReminders();
     renderGroups();
     renderBookings();
@@ -385,6 +389,9 @@ document.querySelectorAll("[data-scroll]").forEach(btn =>
 
 // تسجيل الخروج من هذا الجهاز
 $("logoutBtn").addEventListener("click", () => {
+  if (notificationPollTimer) clearInterval(notificationPollTimer);
+  notificationPollTimer = null;
+  knownNotificationIds.clear();
   localStorage.removeItem(STORAGE_PROFILE);
   localStorage.removeItem(STORAGE_TOKEN);
   profile = null;
@@ -419,18 +426,72 @@ $("reminderToggle").addEventListener("change", async (event) => {
   );
 });
 
+async function refreshNotifications(announceNew = false) {
+  const data = await api("/api/notifications");
+  const items = data.notifications || [];
+  const fresh = items.filter(item => !knownNotificationIds.has(item.id));
+
+  if (announceNew && fresh.length) {
+    const newest = fresh[0];
+    if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
+      new Notification(newest.title, {
+        body: newest.message,
+        tag: `admin-notification-${newest.id}`
+      });
+    } else {
+      showToast(fresh.length === 1
+        ? `إشعار جديد: ${newest.title}`
+        : `لديك ${fresh.length} إشعارات جديدة.`);
+    }
+  }
+
+  items.forEach(item => knownNotificationIds.add(item.id));
+  return items;
+}
+
+function scheduleNotificationPolling() {
+  if (notificationPollTimer) clearInterval(notificationPollTimer);
+  // يجلب الإشعارات الجديدة كل دقيقة ما دام فضاء التلميذ مفتوحاً.
+  notificationPollTimer = setInterval(async () => {
+    if (!token || !profile) return;
+    try {
+      await refreshNotifications(true);
+    } catch (error) {
+      console.warn("تعذر تحديث الإشعارات:", error);
+    }
+  }, 60000);
+}
+
+function showNotificationCenter(items) {
+  document.getElementById("studentNotificationsOverlay")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "studentNotificationsOverlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:10000;background:#0b1734aa;display:grid;place-items:center;padding:18px;";
+  const cards = items.length ? items.slice(0, 30).map(item => `
+    <article style="padding:14px;border:1px solid #e5eaf2;border-radius:14px;background:#fff;margin-top:10px">
+      <b style="display:block;color:#17233d">${escapeHtml(item.title)}</b>
+      <p style="white-space:pre-wrap;line-height:1.8;color:#53627b;margin:8px 0">${escapeHtml(item.message)}</p>
+      <small style="color:#8290a8">${escapeHtml(item.created_at || "")}</small>
+    </article>
+  `).join("") : '<p style="color:#718096;text-align:center;padding:24px">لا توجد إشعارات حالياً.</p>';
+  overlay.innerHTML = `
+    <section style="width:min(620px,100%);max-height:80vh;overflow:auto;background:#f7f9fd;border-radius:20px;padding:20px;box-shadow:0 24px 80px #0004">
+      <header style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <h2 style="margin:0;color:#17233d;font-size:19px">مركز الإشعارات</h2>
+        <button type="button" id="closeStudentNotifications" style="border:0;background:#e8edf6;border-radius:10px;padding:8px 12px;font:inherit;cursor:pointer">إغلاق</button>
+      </header>
+      ${cards}
+    </section>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", event => {
+    if (event.target === overlay || event.target.id === "closeStudentNotifications") overlay.remove();
+  });
+}
+
 $("notificationButton").addEventListener("click", async () => {
   try {
-    const data = await api("/api/notifications");
-    const items = data.notifications || [];
-    if (!items.length) {
-      showToast("لا توجد إشعارات جديدة.");
-      return;
-    }
-    const latest = items.slice(0, 5).map(item =>
-      `${item.title}\\n${item.message}`
-    ).join("\\n\\n");
-    alert(latest);
+    const items = await refreshNotifications(false);
+    showNotificationCenter(items);
   } catch (error) {
     showToast(error.message);
   }
