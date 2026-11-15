@@ -84,7 +84,9 @@ async function showApp() {
     await loadDailyBookingLimit();
     await refreshNotifications(false);
     scheduleNotificationPolling();
-    scheduleSessionReminders();
+    if ("serviceWorker" in navigator && window.isSecureContext) {
+      navigator.serviceWorker.register("/sw.js").catch(error => console.warn("Service worker registration failed:", error));
+    }
     renderGroups();
     renderBookings();
     renderStats();
@@ -401,29 +403,73 @@ $("logoutBtn").addEventListener("click", () => {
   showToast("تم تسجيل الخروج من هذا الجهاز.");
 });
 
-$("reminderToggle").addEventListener("change", async (event) => {
-  if (event.target.checked && "Notification" in window) {
-    const permission = await Notification.requestPermission();
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(char => char.charCodeAt(0)));
+}
 
-    if (permission !== "granted") {
-      event.target.checked = false;
-      localStorage.setItem(STORAGE_REMINDER, "false");
-      showToast("لم يتم السماح بإشعارات المتصفح.");
-      return;
-    }
+async function enableRealPushNotifications() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !window.isSecureContext) {
+    throw new Error("هذا المتصفح لا يدعم الإشعارات الفورية أو أن الموقع ليس HTTPS.");
   }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("لم تسمح بإظهار الإشعارات.");
 
-  localStorage.setItem(
-    STORAGE_REMINDER,
-    String(event.target.checked)
-  );
+  const registration = await navigator.serviceWorker.register("/sw.js");
+  await navigator.serviceWorker.ready;
+  const { publicKey } = await api("/api/push/public-key");
+  if (!publicKey) throw new Error("مفتاح الإشعارات غير متوفر على الخادم.");
 
-  scheduleSessionReminders();
-  showToast(
-    event.target.checked
-      ? "تم تفعيل التذكيرات أثناء بقاء المنصة مفتوحة."
-      : "تم إيقاف التذكيرات."
-  );
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey)
+    });
+  }
+  await api("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify(subscription.toJSON())
+  });
+  return true;
+}
+
+async function disableRealPushNotifications() {
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration("/");
+  const subscription = await registration?.pushManager?.getSubscription();
+  if (!subscription) return;
+  try {
+    await api("/api/push/unsubscribe", {
+      method: "POST",
+      body: JSON.stringify({ endpoint: subscription.endpoint })
+    });
+  } finally {
+    await subscription.unsubscribe();
+  }
+}
+
+$("reminderToggle").addEventListener("change", async (event) => {
+  const enabled = event.target.checked;
+  event.target.disabled = true;
+  try {
+    if (enabled) {
+      await enableRealPushNotifications();
+      localStorage.setItem(STORAGE_REMINDER, "true");
+      showToast("تم تفعيل الإشعارات الفورية وتذكير الحصة قبل 30 دقيقة.");
+    } else {
+      await disableRealPushNotifications();
+      localStorage.setItem(STORAGE_REMINDER, "false");
+      showToast("تم إيقاف الإشعارات على هذا الجهاز.");
+    }
+  } catch (error) {
+    event.target.checked = !enabled;
+    showToast(error.message || "تعذر إعداد الإشعارات.");
+  } finally {
+    event.target.disabled = false;
+  }
 });
 
 async function refreshNotifications(announceNew = false) {
@@ -433,16 +479,9 @@ async function refreshNotifications(announceNew = false) {
 
   if (announceNew && fresh.length) {
     const newest = fresh[0];
-    if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
-      new Notification(newest.title, {
-        body: newest.message,
-        tag: `admin-notification-${newest.id}`
-      });
-    } else {
-      showToast(fresh.length === 1
-        ? `إشعار جديد: ${newest.title}`
-        : `لديك ${fresh.length} إشعارات جديدة.`);
-    }
+    showToast(fresh.length === 1
+      ? `إشعار جديد: ${newest.title}`
+      : `لديك ${fresh.length} إشعارات جديدة.`);
   }
 
   items.forEach(item => knownNotificationIds.add(item.id));
@@ -497,28 +536,6 @@ $("notificationButton").addEventListener("click", async () => {
   }
 });
 
-function scheduleSessionReminders() {
-  reminderTimers.forEach(timer => clearTimeout(timer));
-  reminderTimers = [];
-  if (localStorage.getItem(STORAGE_REMINDER) !== "true" ||
-      !("Notification" in window) || Notification.permission !== "granted") return;
-
-  for (const booking of bookings) {
-    const sessionStart = new Date(`${booking.sessionDate}T${booking.start}:00+01:00`);
-    const reminderAt = sessionStart.getTime() - 30 * 60 * 1000;
-    const delay = reminderAt - Date.now();
-    // مؤقت محلي يعمل فقط ما دامت الصفحة مفتوحة؛ Web Push مطلوب للتذكير بعد إغلاقها.
-    if (delay > 0 && delay <= 2147480000) {
-      const timer = setTimeout(() => {
-        new Notification("تذكير بموعد حصتك", {
-          body: `لديك حصة ${booking.groupId} بعد 30 دقيقة.`,
-          tag: `booking-${booking.id}`
-        });
-      }, delay);
-      reminderTimers.push(timer);
-    }
-  }
-}
 
 // تشغيل التطبيق
 async function startApp() {
