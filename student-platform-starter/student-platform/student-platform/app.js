@@ -4,6 +4,8 @@ const API_BASE = "https://school-server.rfat27406.workers.dev";
 const STORAGE_PROFILE = "madrasati_student_profile_v1";
 const STORAGE_TOKEN = "madrasati_student_token_v1";
 const STORAGE_REMINDER = "madrasati_student_reminder_v1";
+const STORAGE_REGISTRATION = "madrasati_student_registration_v1";
+let registrationPollTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -95,6 +97,68 @@ async function showApp() {
   }
 }
 
+function showRegistrationPending(registration, rejected = false) {
+  $("app").classList.add("hidden");
+  $("welcomeScreen").classList.remove("hidden");
+  const card = document.querySelector(".welcome-card");
+  if (!card) return;
+  const form = $("profileForm");
+  if (form) form.classList.add("hidden");
+  let panel = $("registrationStatusPanel");
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "registrationStatusPanel";
+    panel.className = "registration-status-panel";
+    form?.insertAdjacentElement("afterend", panel);
+  }
+  const name = `${registration.first_name || ""} ${registration.last_name || ""}`.trim();
+  panel.innerHTML = rejected
+    ? `<div class="status-icon">!</div><h2>لم تتم الموافقة على الطلب</h2><p>عذراً ${escapeHtml(name)}، لم تتم الموافقة على طلب تسجيلك.</p><p class="form-error">${escapeHtml(registration.rejection_reason || "يمكنك مراجعة الإدارة لمزيد من المعلومات.")}</p><button class="button button-primary button-wide" id="resubmitRegistration">إرسال طلب جديد</button>`
+    : `<div class="status-icon">⌛</div><span class="status-pill">قيد المراجعة</span><h2>طلبك قيد المراجعة</h2><p>مرحباً ${escapeHtml(name)}، تم استلام طلب تسجيلك بنجاح. سيصبح بإمكانك الدخول إلى المنصة فور موافقة المدير.</p><p class="tiny-note">لا تغلق هذه الصفحة؛ يمكنك العودة إليها لاحقاً من نفس الجهاز.</p><button class="button button-wide" id="checkRegistrationNow">تحديث الحالة</button>`;
+  $("resubmitRegistration")?.addEventListener("click", () => {
+    localStorage.removeItem(STORAGE_REGISTRATION);
+    panel.remove();
+    form?.classList.remove("hidden");
+  });
+  $("checkRegistrationNow")?.addEventListener("click", checkRegistrationStatus);
+}
+
+async function registrationApi(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}), Authorization: `Bearer ${JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "{}").token || ""}` }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "تعذر الاتصال بالسيرفر.");
+  return data;
+}
+
+async function checkRegistrationStatus() {
+  const saved = JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "null");
+  if (!saved?.token) return;
+  try {
+    const status = await registrationApi("/api/registration/status");
+    const registration = status.registration;
+    if (registration.status === "approved") {
+      const claimed = await registrationApi("/api/registration/claim", { method: "POST" });
+      token = claimed.access_token;
+      profile = { firstName: claimed.student.first_name, lastName: claimed.student.last_name, age: claimed.student.age };
+      localStorage.setItem(STORAGE_TOKEN, token);
+      saveProfile();
+      localStorage.removeItem(STORAGE_REGISTRATION);
+      if (registrationPollTimer) clearInterval(registrationPollTimer);
+      registrationPollTimer = null;
+      await showApp();
+      showToast("تمت الموافقة على طلبك. مرحباً بك!");
+      return;
+    }
+    showRegistrationPending(registration, registration.status === "rejected");
+    if (registration.status === "rejected" && registrationPollTimer) {
+      clearInterval(registrationPollTimer); registrationPollTimer = null;
+    }
+  } catch (error) { console.warn("تعذر تحديث حالة طلب التسجيل:", error); }
+}
+
 // إنشاء حساب التلميذ في قاعدة البيانات
 $("profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -123,15 +187,12 @@ $("profileForm").addEventListener("submit", async (event) => {
       })
     });
 
-    profile = { firstName, lastName, age };
-    token = data.access_token;
-
-    localStorage.setItem(STORAGE_TOKEN, token);
-    saveProfile();
-
+    localStorage.setItem(STORAGE_REGISTRATION, JSON.stringify({ token: data.request_token }));
     $("profileError").textContent = "";
-    showToast("تم إنشاء حسابك بنجاح.");
-    await showApp();
+    showRegistrationPending(data.request, false);
+    showToast("تم إرسال طلبك إلى الإدارة للمراجعة.");
+    if (registrationPollTimer) clearInterval(registrationPollTimer);
+    registrationPollTimer = setInterval(checkRegistrationStatus, 15000);
 
   } catch (error) {
     $("profileError").textContent = error.message;
@@ -547,6 +608,14 @@ async function startApp() {
     profile = null;
   }
 
+  const pendingRegistration = JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "null");
+  if (pendingRegistration?.token) {
+    await checkRegistrationStatus();
+    if (localStorage.getItem(STORAGE_REGISTRATION)) {
+      registrationPollTimer = setInterval(checkRegistrationStatus, 15000);
+    }
+    return;
+  }
   if (!profile || !token) {
     showWelcome();
     return;
