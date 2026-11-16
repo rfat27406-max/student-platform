@@ -95,67 +95,6 @@ async function showApp() {
   }
 }
 
-let activationPollTimer = null;
-
-function showActivationPanel(status, rejectionCount = 0) {
-  $("app").classList.add("hidden");
-  $("welcomeScreen").classList.remove("hidden");
-  $("profileForm").classList.add("hidden");
-  $("activationPanel").classList.remove("hidden");
-  const attemptsLeft = Math.max(0, 3 - rejectionCount);
-  $("activationAttempts").textContent = `مرات الرفض: ${rejectionCount} من 3 · المحاولات المتبقية: ${attemptsLeft}`;
-  $("retryActivation").classList.toggle("hidden", status !== "rejected" || attemptsLeft <= 0);
-  if (status === "pending") {
-    $("activationTitle").textContent = "طلبك قيد المراجعة";
-    $("activationMessage").textContent = "تم إرسال معلوماتك إلى المدير. ستنتقل تلقائياً إلى الصفحة الرئيسية بعد قبول الطلب.";
-  } else if (status === "rejected") {
-    $("activationTitle").textContent = "تم رفض طلبك";
-    $("activationMessage").textContent = attemptsLeft > 0
-      ? "تم رفض طلب التفعيل. يمكنك تصحيح معلوماتك ثم إعادة إرسال الطلب."
-      : "تم استنفاد المحاولات الثلاث. لا يمكنك إعادة إرسال الطلب.";
-  } else if (status === "locked") {
-    $("activationTitle").textContent = "تم إيقاف طلبك نهائياً";
-    $("activationMessage").textContent = "تم رفض طلبك ثلاث مرات، ولا يمكن تقديم طلب آخر بهذا الحساب.";
-  }
-}
-
-async function checkActivationStatus() {
-  if (!token) return;
-  const result = await api("/api/student-registration/status");
-  if (result.status === "approved") {
-    if (activationPollTimer) clearInterval(activationPollTimer);
-    $("profileForm").classList.remove("hidden");
-    $("activationPanel").classList.add("hidden");
-    await api("/api/me");
-    await showApp();
-    showToast("تم قبول طلبك. مرحباً بك في المنصة!");
-    return;
-  }
-  showActivationPanel(result.status, result.rejection_count);
-}
-
-function beginActivationPolling() {
-  if (activationPollTimer) clearInterval(activationPollTimer);
-  activationPollTimer = setInterval(() => {
-    checkActivationStatus().catch(error => console.warn("Activation status:", error));
-  }, 8000);
-}
-
-$("retryActivation").addEventListener("click", async () => {
-  const button = $("retryActivation");
-  button.disabled = true;
-  try {
-    await api("/api/student-registration/retry", { method: "POST" });
-    showActivationPanel("pending", Number((await api("/api/student-registration/status")).rejection_count || 0));
-    beginActivationPolling();
-    showToast("تمت إعادة إرسال طلبك إلى المدير.");
-  } catch (error) {
-    showToast(error.message);
-  } finally {
-    button.disabled = false;
-  }
-});
-
 // إنشاء حساب التلميذ في قاعدة البيانات
 $("profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -186,12 +125,13 @@ $("profileForm").addEventListener("submit", async (event) => {
 
     profile = { firstName, lastName, age };
     token = data.access_token;
+
     localStorage.setItem(STORAGE_TOKEN, token);
     saveProfile();
+
     $("profileError").textContent = "";
-    showActivationPanel("pending", 0);
-    beginActivationPolling();
-    showToast("تم إرسال طلب التفعيل إلى المدير.");
+    showToast("تم إنشاء حسابك بنجاح.");
+    await showApp();
 
   } catch (error) {
     $("profileError").textContent = error.message;
@@ -452,7 +392,6 @@ document.querySelectorAll("[data-scroll]").forEach(btn =>
 // تسجيل الخروج من هذا الجهاز
 $("logoutBtn").addEventListener("click", () => {
   if (notificationPollTimer) clearInterval(notificationPollTimer);
-  if (activationPollTimer) clearInterval(activationPollTimer);
   notificationPollTimer = null;
   knownNotificationIds.clear();
   localStorage.removeItem(STORAGE_PROFILE);
@@ -614,14 +553,8 @@ async function startApp() {
   }
 
   try {
-    const activation = await api("/api/student-registration/status");
-    if (activation.status === "approved") {
-      await api("/api/me");
-      await showApp();
-    } else {
-      showActivationPanel(activation.status, activation.rejection_count);
-      if (activation.status === "pending") beginActivationPolling();
-    }
+    await api("/api/me");
+    await showApp();
   } catch (error) {
     localStorage.removeItem(STORAGE_PROFILE);
     localStorage.removeItem(STORAGE_TOKEN);
