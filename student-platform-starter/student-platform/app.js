@@ -4,6 +4,8 @@ const API_BASE = "https://school-server.rfat27406.workers.dev";
 const STORAGE_PROFILE = "madrasati_student_profile_v1";
 const STORAGE_TOKEN = "madrasati_student_token_v1";
 const STORAGE_REMINDER = "madrasati_student_reminder_v1";
+const STORAGE_REGISTRATION = "madrasati_student_registration_v1";
+let registrationPollTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -79,7 +81,6 @@ async function showApp() {
 
   try {
     await loadGroups();
-    await loadTeachers();
     await loadBookings();
     await loadDailyBookingLimit();
     await refreshNotifications(false);
@@ -93,6 +94,71 @@ async function showApp() {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+function showRegistrationPending(registration, rejected = false) {
+  $("app").classList.add("hidden");
+  $("welcomeScreen").classList.add("hidden");
+  const waiting = $("registrationWaitingPage");
+  if (!waiting) return;
+  waiting.classList.remove("hidden");
+  const name = `${registration.first_name || ""} ${registration.last_name || ""}`.trim();
+  waiting.innerHTML = rejected
+    ? `<div class="welcome-card waiting-card"><div class="status-icon">!</div><span class="status-pill">تمت مراجعة الطلب</span><h2>لم تتم الموافقة على طلب التسجيل</h2><p>عذراً ${escapeHtml(name)}، لم تتم الموافقة على طلبك.</p><p class="form-error">${escapeHtml(registration.rejection_reason || "يمكنك إرسال طلب جديد.")}</p><button class="button button-primary button-wide" id="returnToRegistration">العودة إلى صفحة التسجيل</button></div>`
+    : `<div class="welcome-card waiting-card"><div class="status-icon">⌛</div><span class="status-pill">قيد المراجعة</span><h2>صفحة الانتظار</h2><p>مرحباً ${escapeHtml(name)}، تم استلام طلبك بنجاح.</p><p>انتظر حتى تقوم الإدارة بتفعيل حسابك. بعد التفعيل ستنتقل تلقائياً إلى الصفحة الرئيسية.</p><p class="tiny-note">يتم تحديث حالة الطلب تلقائياً كل 15 ثانية.</p><button class="button button-wide" id="checkRegistrationNow">التحقق من الحالة الآن</button></div>`;
+  $("returnToRegistration")?.addEventListener("click", () => {
+    localStorage.removeItem(STORAGE_REGISTRATION);
+    if (registrationPollTimer) clearInterval(registrationPollTimer);
+    registrationPollTimer = null;
+    waiting.classList.add("hidden");
+    showWelcome();
+  });
+  $("checkRegistrationNow")?.addEventListener("click", checkRegistrationStatus);
+}
+
+async function registrationApi(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}), Authorization: `Bearer ${JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "{}").token || ""}` }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "تعذر الاتصال بالسيرفر.");
+  return data;
+}
+
+async function checkRegistrationStatus() {
+  const saved = JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "null");
+  if (!saved?.token) return;
+  try {
+    const status = await registrationApi("/api/registration/status");
+    const registration = status.registration;
+    if (registration.status === "approved") {
+      const claimed = await registrationApi("/api/registration/claim", { method: "POST" });
+      token = claimed.access_token;
+      profile = { firstName: claimed.student.first_name, lastName: claimed.student.last_name, age: claimed.student.age };
+      localStorage.setItem(STORAGE_TOKEN, token);
+      saveProfile();
+      localStorage.removeItem(STORAGE_REGISTRATION);
+      $("registrationWaitingPage")?.classList.add("hidden");
+      if (registrationPollTimer) clearInterval(registrationPollTimer);
+      registrationPollTimer = null;
+      await showApp();
+      showToast("تمت الموافقة على طلبك. مرحباً بك!");
+      return;
+    }
+    if (registration.status === "rejected") {
+      localStorage.removeItem(STORAGE_REGISTRATION);
+      if (registrationPollTimer) clearInterval(registrationPollTimer);
+      registrationPollTimer = null;
+      $("registrationWaitingPage")?.classList.add("hidden");
+      showWelcome();
+      $("profileError").textContent =
+        `تم رفض طلب التسجيل. ${registration.rejection_reason || "يمكنك مراجعة الإدارة أو إرسال طلب جديد."}`;
+      return "rejected";
+    }
+    showRegistrationPending(registration, false);
+    return registration.status;
+  } catch (error) { console.warn("تعذر تحديث حالة طلب التسجيل:", error); }
 }
 
 // إنشاء حساب التلميذ في قاعدة البيانات
@@ -123,15 +189,12 @@ $("profileForm").addEventListener("submit", async (event) => {
       })
     });
 
-    profile = { firstName, lastName, age };
-    token = data.access_token;
-
-    localStorage.setItem(STORAGE_TOKEN, token);
-    saveProfile();
-
+    localStorage.setItem(STORAGE_REGISTRATION, JSON.stringify({ token: data.request_token }));
     $("profileError").textContent = "";
-    showToast("تم إنشاء حسابك بنجاح.");
-    await showApp();
+    showRegistrationPending(data.request, false);
+    showToast("تم إرسال طلبك إلى الإدارة للمراجعة.");
+    if (registrationPollTimer) clearInterval(registrationPollTimer);
+    registrationPollTimer = setInterval(checkRegistrationStatus, 15000);
 
   } catch (error) {
     $("profileError").textContent = error.message;
@@ -203,43 +266,41 @@ async function loadDailyBookingLimit() {
 }
 
 function renderGroups() {
-  const makeCard = g => {
-    const alreadyBooked = bookings.some(
-      b => b.groupId === g.id && b.sessionDate === nextSessionDate(g)
-    );
-
-    return `<article class="group-card">
-      <div class="group-top">
-        <span class="group-number">الفوج ${g.id}</span>
-        <span class="group-day">${g.day}</span>
-      </div>
-      <h4>${escapeHtml(g.name || `فوج البكالوريا ${g.id}`)}</h4>
-      <p class="group-teacher">${escapeHtml(g.teacherName)} · ${escapeHtml(g.subject)}</p>
-      <div class="group-time">◷ ${g.start} — ${g.end}</div>
-      <div class="group-bottom">
-        <div class="price">${g.price}
-          <small>دج / الحصة</small>
-        </div>
-        <button class="join-button" data-join="${g.id}"
-          ${(alreadyBooked || dailyBookingLimit.remaining <= 0) ? "disabled" : ""}>
-          ${alreadyBooked ? "تم التسجيل" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة")}
-        </button>
-      </div>
-    </article>`;
+  const makeDayContent = dayGroups => {
+    const buckets = new Map();
+    dayGroups.forEach(group => {
+      const key = `${group.teacherName}|||${group.subject}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(group);
+    });
+    return [...buckets.entries()].map(([key, teacherGroups]) => {
+      const [teacherName, subject] = key.split("|||");
+      const cards = teacherGroups.map(g => {
+        const alreadyBooked = bookings.some(
+          b => b.groupId === g.id && b.sessionDate === nextSessionDate(g)
+        );
+        return `<article class="group-card">
+          <div class="group-top"><span class="group-number">الفوج ${g.id}</span><span class="group-day">${g.day}</span></div>
+          <h4>${escapeHtml(g.name || `الفوج ${g.id}`)}</h4>
+          <div class="group-time">◷ ${g.start} — ${g.end}</div>
+          <div class="group-bottom">
+            <div class="price">${g.price}<small>دج / الحصة</small></div>
+            <button class="join-button" data-join="${g.id}" ${(alreadyBooked || dailyBookingLimit.remaining <= 0) ? "disabled" : ""}>
+              ${alreadyBooked ? "تم التسجيل" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة")}
+            </button>
+          </div>
+        </article>`;
+      }).join("");
+      return `<section class="teacher-group-section">
+        <div class="teacher-group-heading"><h4>${escapeHtml(teacherName)}</h4><span>${escapeHtml(subject || "المادة غير محددة")}</span></div>
+        <div class="groups-grid">${cards}</div>
+      </section>`;
+    }).join("") || '<p class="empty-hint">لا توجد أفواج متاحة حالياً.</p>';
   };
-
-  $("fridayGroups").innerHTML = groups
-    .filter(g => g.dayKey === "friday")
-    .map(makeCard).join("");
-
-  $("saturdayGroups").innerHTML = groups
-    .filter(g => g.dayKey === "saturday")
-    .map(makeCard).join("");
-
+  $("fridayGroups").innerHTML = makeDayContent(groups.filter(g => g.dayKey === "friday"));
+  $("saturdayGroups").innerHTML = makeDayContent(groups.filter(g => g.dayKey === "saturday"));
   document.querySelectorAll("[data-join]").forEach(btn => {
-    btn.addEventListener("click", () =>
-      joinGroup(Number(btn.dataset.join))
-    );
+    btn.addEventListener("click", () => joinGroup(Number(btn.dataset.join)));
   });
 }
 
@@ -547,6 +608,14 @@ async function startApp() {
     profile = null;
   }
 
+  const pendingRegistration = JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "null");
+  if (pendingRegistration?.token) {
+    const registrationStatus = await checkRegistrationStatus();
+    if (registrationStatus === "pending" && localStorage.getItem(STORAGE_REGISTRATION)) {
+      registrationPollTimer = setInterval(checkRegistrationStatus, 15000);
+    }
+    return;
+  }
   if (!profile || !token) {
     showWelcome();
     return;

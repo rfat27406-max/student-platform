@@ -81,7 +81,6 @@ async function showApp() {
 
   try {
     await loadGroups();
-    await loadTeachers();
     await loadBookings();
     await loadDailyBookingLimit();
     await refreshNotifications(false);
@@ -99,26 +98,20 @@ async function showApp() {
 
 function showRegistrationPending(registration, rejected = false) {
   $("app").classList.add("hidden");
-  $("welcomeScreen").classList.remove("hidden");
-  const card = document.querySelector(".welcome-card");
-  if (!card) return;
-  const form = $("profileForm");
-  if (form) form.classList.add("hidden");
-  let panel = $("registrationStatusPanel");
-  if (!panel) {
-    panel = document.createElement("section");
-    panel.id = "registrationStatusPanel";
-    panel.className = "registration-status-panel";
-    form?.insertAdjacentElement("afterend", panel);
-  }
+  $("welcomeScreen").classList.add("hidden");
+  const waiting = $("registrationWaitingPage");
+  if (!waiting) return;
+  waiting.classList.remove("hidden");
   const name = `${registration.first_name || ""} ${registration.last_name || ""}`.trim();
-  panel.innerHTML = rejected
-    ? `<div class="status-icon">!</div><h2>لم تتم الموافقة على الطلب</h2><p>عذراً ${escapeHtml(name)}، لم تتم الموافقة على طلب تسجيلك.</p><p class="form-error">${escapeHtml(registration.rejection_reason || "يمكنك مراجعة الإدارة لمزيد من المعلومات.")}</p><button class="button button-primary button-wide" id="resubmitRegistration">إرسال طلب جديد</button>`
-    : `<div class="status-icon">⌛</div><span class="status-pill">قيد المراجعة</span><h2>طلبك قيد المراجعة</h2><p>مرحباً ${escapeHtml(name)}، تم استلام طلب تسجيلك بنجاح. سيصبح بإمكانك الدخول إلى المنصة فور موافقة المدير.</p><p class="tiny-note">لا تغلق هذه الصفحة؛ يمكنك العودة إليها لاحقاً من نفس الجهاز.</p><button class="button button-wide" id="checkRegistrationNow">تحديث الحالة</button>`;
-  $("resubmitRegistration")?.addEventListener("click", () => {
+  waiting.innerHTML = rejected
+    ? `<div class="welcome-card waiting-card"><div class="status-icon">!</div><span class="status-pill">تمت مراجعة الطلب</span><h2>لم تتم الموافقة على طلب التسجيل</h2><p>عذراً ${escapeHtml(name)}، لم تتم الموافقة على طلبك.</p><p class="form-error">${escapeHtml(registration.rejection_reason || "يمكنك إرسال طلب جديد.")}</p><button class="button button-primary button-wide" id="returnToRegistration">العودة إلى صفحة التسجيل</button></div>`
+    : `<div class="welcome-card waiting-card"><div class="status-icon">⌛</div><span class="status-pill">قيد المراجعة</span><h2>صفحة الانتظار</h2><p>مرحباً ${escapeHtml(name)}، تم استلام طلبك بنجاح.</p><p>انتظر حتى تقوم الإدارة بتفعيل حسابك. بعد التفعيل ستنتقل تلقائياً إلى الصفحة الرئيسية.</p><p class="tiny-note">يتم تحديث حالة الطلب تلقائياً كل 15 ثانية.</p><button class="button button-wide" id="checkRegistrationNow">التحقق من الحالة الآن</button></div>`;
+  $("returnToRegistration")?.addEventListener("click", () => {
     localStorage.removeItem(STORAGE_REGISTRATION);
-    panel.remove();
-    form?.classList.remove("hidden");
+    if (registrationPollTimer) clearInterval(registrationPollTimer);
+    registrationPollTimer = null;
+    waiting.classList.add("hidden");
+    showWelcome();
   });
   $("checkRegistrationNow")?.addEventListener("click", checkRegistrationStatus);
 }
@@ -146,16 +139,25 @@ async function checkRegistrationStatus() {
       localStorage.setItem(STORAGE_TOKEN, token);
       saveProfile();
       localStorage.removeItem(STORAGE_REGISTRATION);
+      $("registrationWaitingPage")?.classList.add("hidden");
       if (registrationPollTimer) clearInterval(registrationPollTimer);
       registrationPollTimer = null;
       await showApp();
       showToast("تمت الموافقة على طلبك. مرحباً بك!");
       return;
     }
-    showRegistrationPending(registration, registration.status === "rejected");
-    if (registration.status === "rejected" && registrationPollTimer) {
-      clearInterval(registrationPollTimer); registrationPollTimer = null;
+    if (registration.status === "rejected") {
+      localStorage.removeItem(STORAGE_REGISTRATION);
+      if (registrationPollTimer) clearInterval(registrationPollTimer);
+      registrationPollTimer = null;
+      $("registrationWaitingPage")?.classList.add("hidden");
+      showWelcome();
+      $("profileError").textContent =
+        `تم رفض طلب التسجيل. ${registration.rejection_reason || "يمكنك مراجعة الإدارة أو إرسال طلب جديد."}`;
+      return "rejected";
     }
+    showRegistrationPending(registration, false);
+    return registration.status;
   } catch (error) { console.warn("تعذر تحديث حالة طلب التسجيل:", error); }
 }
 
@@ -264,43 +266,41 @@ async function loadDailyBookingLimit() {
 }
 
 function renderGroups() {
-  const makeCard = g => {
-    const alreadyBooked = bookings.some(
-      b => b.groupId === g.id && b.sessionDate === nextSessionDate(g)
-    );
-
-    return `<article class="group-card">
-      <div class="group-top">
-        <span class="group-number">الفوج ${g.id}</span>
-        <span class="group-day">${g.day}</span>
-      </div>
-      <h4>${escapeHtml(g.name || `فوج البكالوريا ${g.id}`)}</h4>
-      <p class="group-teacher">${escapeHtml(g.teacherName)} · ${escapeHtml(g.subject)}</p>
-      <div class="group-time">◷ ${g.start} — ${g.end}</div>
-      <div class="group-bottom">
-        <div class="price">${g.price}
-          <small>دج / الحصة</small>
-        </div>
-        <button class="join-button" data-join="${g.id}"
-          ${(alreadyBooked || dailyBookingLimit.remaining <= 0) ? "disabled" : ""}>
-          ${alreadyBooked ? "تم التسجيل" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة")}
-        </button>
-      </div>
-    </article>`;
+  const makeDayContent = dayGroups => {
+    const buckets = new Map();
+    dayGroups.forEach(group => {
+      const key = `${group.teacherName}|||${group.subject}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(group);
+    });
+    return [...buckets.entries()].map(([key, teacherGroups]) => {
+      const [teacherName, subject] = key.split("|||");
+      const cards = teacherGroups.map(g => {
+        const alreadyBooked = bookings.some(
+          b => b.groupId === g.id && b.sessionDate === nextSessionDate(g)
+        );
+        return `<article class="group-card">
+          <div class="group-top"><span class="group-number">الفوج ${g.id}</span><span class="group-day">${g.day}</span></div>
+          <h4>${escapeHtml(g.name || `الفوج ${g.id}`)}</h4>
+          <div class="group-time">◷ ${g.start} — ${g.end}</div>
+          <div class="group-bottom">
+            <div class="price">${g.price}<small>دج / الحصة</small></div>
+            <button class="join-button" data-join="${g.id}" ${(alreadyBooked || dailyBookingLimit.remaining <= 0) ? "disabled" : ""}>
+              ${alreadyBooked ? "تم التسجيل" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة")}
+            </button>
+          </div>
+        </article>`;
+      }).join("");
+      return `<section class="teacher-group-section">
+        <div class="teacher-group-heading"><h4>${escapeHtml(teacherName)}</h4><span>${escapeHtml(subject || "المادة غير محددة")}</span></div>
+        <div class="groups-grid">${cards}</div>
+      </section>`;
+    }).join("") || '<p class="empty-hint">لا توجد أفواج متاحة حالياً.</p>';
   };
-
-  $("fridayGroups").innerHTML = groups
-    .filter(g => g.dayKey === "friday")
-    .map(makeCard).join("");
-
-  $("saturdayGroups").innerHTML = groups
-    .filter(g => g.dayKey === "saturday")
-    .map(makeCard).join("");
-
+  $("fridayGroups").innerHTML = makeDayContent(groups.filter(g => g.dayKey === "friday"));
+  $("saturdayGroups").innerHTML = makeDayContent(groups.filter(g => g.dayKey === "saturday"));
   document.querySelectorAll("[data-join]").forEach(btn => {
-    btn.addEventListener("click", () =>
-      joinGroup(Number(btn.dataset.join))
-    );
+    btn.addEventListener("click", () => joinGroup(Number(btn.dataset.join)));
   });
 }
 
@@ -610,8 +610,8 @@ async function startApp() {
 
   const pendingRegistration = JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "null");
   if (pendingRegistration?.token) {
-    await checkRegistrationStatus();
-    if (localStorage.getItem(STORAGE_REGISTRATION)) {
+    const registrationStatus = await checkRegistrationStatus();
+    if (registrationStatus === "pending" && localStorage.getItem(STORAGE_REGISTRATION)) {
       registrationPollTimer = setInterval(checkRegistrationStatus, 15000);
     }
     return;
