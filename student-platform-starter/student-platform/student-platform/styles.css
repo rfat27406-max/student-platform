@@ -26,3 +26,88 @@
 .teacher-group-section .groups-grid{margin-top:0}
 .waiting-card{text-align:center}
 .waiting-card .status-icon{font-size:2.2rem;margin-bottom:12px}
+/* ===== Group cards layout correction ===== */
+.teacher-group-section,
+.teacher-group-section .groups-grid {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+}
+
+.teacher-group-section .groups-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  align-items: stretch;
+  justify-items: stretch;
+  gap: 16px;
+}
+
+.teacher-group-section .group-card,
+.groups-grid > .group-card {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.group-card h4 {
+  line-height: 1.65;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.group-card .group-time,
+.group-card .group-teacher {
+  line-height: 1.8;
+  overflow-wrap: break-word;
+}
+
+.group-card .group-bottom {
+  margin-top: auto;
+  padding-top: 14px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.group-card .join-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (min-width: 761px) {
+  .teacher-group-section .groups-grid {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .teacher-group-section .groups-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .teacher-group-section .group-card {
+    padding: 16px;
+  }
+}
+
+/* تحسينات تجربة التسجيل والحالة */
+.form-hint{margin:0;color:#71809b;font-size:11px;line-height:1.8}
+.form-error{line-height:1.8}
+.booking-status-cancelled{background:#fff0ef;color:#bd5148}
+.join-button:disabled{cursor:not-allowed;opacity:.62;transform:none}
+.group-card:focus-within{outline:2px solid #aab8ff;outline-offset:2px}
+@media(max-width:760px){
+  .form-hint{font-size:10px}
+  .notice-strip{align-items:flex-start}
+}
+
+:focus-visible{outline:3px solid #9aaeff;outline-offset:2px}
+.profile-form input{transition:border-color .18s,box-shadow .18s}
+.profile-form input:focus{border-color:#7188f6;box-shadow:0 0 0 3px #7188f61a}
+.join-button{transition:background .18s,color .18s,transform .18s}
+.join-button:not(:disabled):active{transform:scale(.98)}
+.booking-item{transition:border-color .18s,box-shadow .18s}
+.booking-item:hover{border-color:#cfd8ff;box-shadow:0 8px 24px #1b2a4b0c}

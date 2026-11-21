@@ -16,17 +16,18 @@
       <div class="brand-mark">م</div>
       <p class="eyebrow">فضاء التلميذ</p>
       <h1>خطوتك نحو<br><span>التفوق تبدأ هنا</span></h1>
-      <p class="muted intro">أرسل طلب التسجيل وانتظر موافقة إدارة المدرسة قبل الدخول إلى فضائك التعليمي.</p>
+      <p class="muted intro">أرسل طلب التسجيل وانتظر موافقة الإدارة. بعد الموافقة سيُفتح فضاؤك تلقائياً على هذا الجهاز.</p>
       <form id="profileForm" class="profile-form">
         <label>الاسم
-          <input id="firstName" type="text" autocomplete="given-name" placeholder="أدخل اسمك" required maxlength="40">
+          <input id="firstName" type="text" autocomplete="given-name" placeholder="أدخل اسمك" required maxlength="40" minlength="2">
         </label>
         <label>اللقب
-          <input id="lastName" type="text" autocomplete="family-name" placeholder="أدخل لقبك" required maxlength="40">
+          <input id="lastName" type="text" autocomplete="family-name" placeholder="أدخل لقبك" required maxlength="40" minlength="2">
         </label>
         <label>العمر
-          <input id="age" type="number" inputmode="numeric" min="15" max="18" placeholder="من 15 إلى 18" required>
+          <input id="age" type="number" inputmode="numeric" min="15" max="18" step="1" placeholder="من 15 إلى 18" required>
         </label>
+        <p class="form-hint">تأكد من كتابة اسمك ولقبك بشكل صحيح؛ لا يمكن إرسال طلب ثانٍ بنفس الاسم واللقب أثناء وجود طلب أو حساب مسجل.</p>
         <p id="profileError" class="form-error" role="alert"></p>
         <button class="button button-primary button-wide" type="submit">إرسال طلب التسجيل <span>←</span></button>
       </form>
@@ -73,7 +74,7 @@
         <div id="fridayGroups" class="groups-grid"></div>
         <div class="group-day-title saturday-title"><span>السبت</span><span class="day-line"></span></div>
         <div id="saturdayGroups" class="groups-grid"></div>
-        <div class="notice-strip"><span>ⓘ</span><p>تُفتح نافذة التسجيل يومي الجمعة والسبت من 07:30 صباحاً إلى 16:00. سيتم التحقق من الموعد نهائياً عبر السيرفر عند ربطه.</p></div>
+        <div class="notice-strip"><span>ⓘ</span><p>تُفتح نافذة التسجيل يومي الجمعة والسبت من 07:30 صباحاً إلى 16:00 بتوقيت الجزائر. المقاعد غير محدودة، ويمكنك التسجيل في 3 أفواج كحد أقصى خلال اليوم. يعتمد القبول النهائي على تحقق السيرفر.</p></div>
       </section>
 
       <section id="my-bookings" class="page-section hidden">

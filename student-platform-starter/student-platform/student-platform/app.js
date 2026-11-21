@@ -8,6 +8,10 @@ const STORAGE_REGISTRATION = "madrasati_student_registration_v1";
 let registrationPollTimer = null;
 
 const $ = (id) => document.getElementById(id);
+const readStoredJSON = (key, fallback = null) => {
+  try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
+  catch { localStorage.removeItem(key); return fallback; }
+};
 
 let profile = null;
 let token = localStorage.getItem(STORAGE_TOKEN);
@@ -62,7 +66,9 @@ function saveProfile() {
 
 function showWelcome() {
   $("app").classList.add("hidden");
+  $("registrationWaitingPage")?.classList.add("hidden");
   $("welcomeScreen").classList.remove("hidden");
+  $("profileForm")?.querySelector('[type="submit"]')?.removeAttribute("disabled");
 }
 
 async function showApp() {
@@ -119,7 +125,7 @@ function showRegistrationPending(registration, rejected = false) {
 async function registrationApi(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}), Authorization: `Bearer ${JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "{}").token || ""}` }
+    headers: { "Content-Type": "application/json", ...(options.headers || {}), Authorization: `Bearer ${readStoredJSON(STORAGE_REGISTRATION, {})?.token || ""}` }
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "تعذر الاتصال بالسيرفر.");
@@ -127,7 +133,7 @@ async function registrationApi(path, options = {}) {
 }
 
 async function checkRegistrationStatus() {
-  const saved = JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "null");
+  const saved = readStoredJSON(STORAGE_REGISTRATION);
   if (!saved?.token) return;
   try {
     const status = await registrationApi("/api/registration/status");
@@ -165,14 +171,15 @@ async function checkRegistrationStatus() {
 $("profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const firstName = $("firstName").value.trim();
-  const lastName = $("lastName").value.trim();
+  const normalizeName = value => String(value || "").normalize("NFKC").trim().replace(/\s+/g, " ");
+  const firstName = normalizeName($("firstName").value);
+  const lastName = normalizeName($("lastName").value);
   const age = Number($("age").value);
 
-  if (!firstName || !lastName ||
+  if (!firstName || !lastName || firstName.length > 40 || lastName.length > 40 ||
       !Number.isInteger(age) || age < 15 || age > 18) {
     $("profileError").textContent =
-      "يرجى إدخال الاسم واللقب، وأن يكون العمر بين 15 و18 سنة.";
+      "تحقق من الاسم واللقب (40 حرفاً كحد أقصى) ومن العمر (15 إلى 18 سنة).";
     return;
   }
 
@@ -277,16 +284,18 @@ function renderGroups() {
       const [teacherName, subject] = key.split("|||");
       const cards = teacherGroups.map(g => {
         const alreadyBooked = bookings.some(
-          b => b.groupId === g.id && b.sessionDate === nextSessionDate(g)
+          b => b.groupId === g.id && b.sessionDate === nextSessionDate(g) && b.status !== "cancelled"
         );
+        const windowOpen = isRegistrationWindowOpen();
+        const unavailableReason = !windowOpen ? "التسجيل مغلق حالياً" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة");
         return `<article class="group-card">
           <div class="group-top"><span class="group-number">الفوج ${g.id}</span><span class="group-day">${g.day}</span></div>
           <h4>${escapeHtml(g.name || `الفوج ${g.id}`)}</h4>
           <div class="group-time">◷ ${g.start} — ${g.end}</div>
           <div class="group-bottom">
             <div class="price">${g.price}<small>دج / الحصة</small></div>
-            <button class="join-button" data-join="${g.id}" ${(alreadyBooked || dailyBookingLimit.remaining <= 0) ? "disabled" : ""}>
-              ${alreadyBooked ? "تم التسجيل" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة")}
+            <button class="join-button" data-join="${g.id}" ${(alreadyBooked || dailyBookingLimit.remaining <= 0 || !windowOpen) ? "disabled" : ""}>
+              ${alreadyBooked ? "تم التسجيل" : unavailableReason}
             </button>
           </div>
         </article>`;
@@ -399,15 +408,16 @@ function renderBookings() {
         <strong>${escapeHtml(b.teacherName)} · ${escapeHtml(b.groupName)}</strong>
         <p>${b.sessionDate} · ${b.day} · ${b.start} إلى ${b.end} · ${b.price} دج</p>
       </div>
-      <span class="booking-status">تم التسجيل</span>
+      <span class="booking-status ${b.status === "cancelled" ? "booking-status-cancelled" : ""}">${b.status === "cancelled" ? "ملغى" : b.status === "attended" ? "حضر" : b.status === "absent" ? "غائب" : "تم التسجيل"}</span>
     </article>
   `).join("");
 }
 
 function renderStats() {
-  $("statBookings").textContent = bookings.length;
+  const activeBookings = bookings.filter(b => b.status !== "cancelled");
+  $("statBookings").textContent = activeBookings.length;
 
-  $("statHours").textContent = bookings.reduce((sum, b) => {
+  $("statHours").textContent = activeBookings.reduce((sum, b) => {
     const start = Number(b.start.slice(0, 2)) * 60 +
       Number(b.start.slice(3, 5));
     const end = Number(b.end.slice(0, 2)) * 60 +
@@ -415,7 +425,7 @@ function renderStats() {
     return sum + (end - start) / 60;
   }, 0);
 
-  $("statCost").textContent = bookings.reduce(
+  $("statCost").textContent = activeBookings.reduce(
     (sum, b) => sum + b.price, 0
   ).toLocaleString("ar-DZ");
 }
@@ -451,7 +461,8 @@ document.querySelectorAll("[data-scroll]").forEach(btn =>
 );
 
 // تسجيل الخروج من هذا الجهاز
-$("logoutBtn").addEventListener("click", () => {
+$("logoutBtn").addEventListener("click", async () => {
+  try { if (token) await api("/api/logout", { method: "POST" }); } catch (error) { console.warn("تعذر إبطال الجلسة على الخادم:", error); }
   if (notificationPollTimer) clearInterval(notificationPollTimer);
   notificationPollTimer = null;
   knownNotificationIds.clear();
@@ -601,14 +612,12 @@ $("notificationButton").addEventListener("click", async () => {
 // تشغيل التطبيق
 async function startApp() {
   try {
-    profile = JSON.parse(
-      localStorage.getItem(STORAGE_PROFILE) || "null"
-    );
+    profile = readStoredJSON(STORAGE_PROFILE);
   } catch {
     profile = null;
   }
 
-  const pendingRegistration = JSON.parse(localStorage.getItem(STORAGE_REGISTRATION) || "null");
+  const pendingRegistration = readStoredJSON(STORAGE_REGISTRATION);
   if (pendingRegistration?.token) {
     const registrationStatus = await checkRegistrationStatus();
     if (registrationStatus === "pending" && localStorage.getItem(STORAGE_REGISTRATION)) {
@@ -635,3 +644,13 @@ async function startApp() {
 }
 
 startApp();
+
+setInterval(async () => {
+  if (!token || $("app")?.classList.contains("hidden")) return;
+  try {
+    await loadDailyBookingLimit();
+    renderGroups();
+  } catch (error) {
+    console.warn("تعذر تحديث حالة نافذة التسجيل:", error);
+  }
+}, 60000);
