@@ -93,21 +93,142 @@
   }
 }
 
-/* تحسينات تجربة التسجيل والحالة */
-.form-hint{margin:0;color:#71809b;font-size:11px;line-height:1.8}
-.form-error{line-height:1.8}
-.booking-status-cancelled{background:#fff0ef;color:#bd5148}
-.join-button:disabled{cursor:not-allowed;opacity:.62;transform:none}
-.group-card:focus-within{outline:2px solid #aab8ff;outline-offset:2px}
-@media(max-width:760px){
-  .form-hint{font-size:10px}
-  .notice-strip{align-items:flex-start}
+
+/* ===== Madrassati: uniform group-card dimensions ===== */
+.teacher-group-section .groups-grid,
+.groups-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 320px));
+  justify-content: start;
+  align-items: stretch;
+  gap: 16px;
 }
 
-:focus-visible{outline:3px solid #9aaeff;outline-offset:2px}
-.profile-form input{transition:border-color .18s,box-shadow .18s}
-.profile-form input:focus{border-color:#7188f6;box-shadow:0 0 0 3px #7188f61a}
-.join-button{transition:background .18s,color .18s,transform .18s}
-.join-button:not(:disabled):active{transform:scale(.98)}
-.booking-item{transition:border-color .18s,box-shadow .18s}
-.booking-item:hover{border-color:#cfd8ff;box-shadow:0 8px 24px #1b2a4b0c}
+.teacher-group-section .group-card,
+.groups-grid > .group-card {
+  width: 100%;
+  min-width: 0;
+  height: 190px;
+  min-height: 190px;
+  max-height: 190px;
+  display: flex;
+  flex-direction: column;
+  padding: 17px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.group-card .group-top {
+  flex: 0 0 auto;
+  min-height: 28px;
+}
+
+.group-card h4 {
+  margin: 12px 0 5px;
+  line-height: 1.5;
+  min-height: 23px;
+}
+
+.group-card .group-time,
+.group-card .group-teacher {
+  line-height: 1.6;
+  max-height: 38px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-card .group-bottom {
+  margin-top: auto;
+  min-height: 42px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-card .price {
+  white-space: nowrap;
+}
+
+.group-card .join-button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Tablet: slightly narrower cards, same height */
+@media (min-width: 761px) and (max-width: 1050px) {
+  .teacher-group-section .groups-grid,
+  .groups-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 300px));
+    gap: 14px;
+  }
+}
+
+/* Mobile: one full-width card per row */
+@media (max-width: 760px) {
+  .teacher-group-section .groups-grid,
+  .groups-grid {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    gap: 12px;
+  }
+
+  .teacher-group-section .group-card,
+  .groups-grid > .group-card {
+    width: 100%;
+    height: 180px;
+    min-height: 180px;
+    max-height: 180px;
+  }
+}
+
+
+
+/* ===== Fixed teacher-name typography ===== */
+/* Teacher name in the teacher profile card */
+.teacher-info h3 {
+  font-size: 13px !important;
+  line-height: 1.5;
+  font-weight: 700;
+  margin: 0 0 5px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Teacher name in each teacher/group section heading */
+.teacher-group-heading h4 {
+  font-size: 14px !important;
+  line-height: 1.5;
+  font-weight: 700;
+  max-width: min(100%, 260px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Teacher name shown inside a group card */
+.group-card .group-teacher {
+  font-size: 11px !important;
+  line-height: 1.5;
+  font-weight: 500;
+  max-height: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep the same typography on smaller screens */
+@media (max-width: 760px) {
+  .teacher-info h3 {
+    font-size: 12px !important;
+  }
+
+  .teacher-group-heading h4 {
+    font-size: 13px !important;
+  }
+
+  .group-card .group-teacher {
+    font-size: 11px !important;
+  }
+}
