@@ -232,3 +232,43 @@
     font-size: 11px !important;
   }
 }
+
+
+/* ===== Final fix: keep teacher names compact and consistent ===== */
+.teacher-group-heading {
+  min-height: 46px;
+}
+
+.teacher-group-heading h4 {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  font-weight: 700;
+  margin: 0 !important;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teacher-group-heading span {
+  font-size: 11px !important;
+  line-height: 1.5;
+}
+
+/* Teacher name in the teacher profile card */
+.teacher-card .teacher-info h3 {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  font-weight: 700;
+  margin: 0 0 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .teacher-group-heading h4,
+  .teacher-card .teacher-info h3 {
+    font-size: 12px !important;
+  }
+}
