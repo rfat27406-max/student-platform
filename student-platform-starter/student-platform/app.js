@@ -1,3 +1,4 @@
+
 const API_BASE = "https://school-server.rfat27406.workers.dev";
 
 const STORAGE_PROFILE = "madrasati_student_profile_v1";
@@ -59,6 +60,14 @@ function escapeHtml(value) {
   }[ch]));
 }
 
+const WEEKDAYS = [
+  { key: "sunday", label: "الأحد" }, { key: "monday", label: "الاثنين" },
+  { key: "tuesday", label: "الثلاثاء" }, { key: "wednesday", label: "الأربعاء" },
+  { key: "thursday", label: "الخميس" }, { key: "friday", label: "الجمعة" },
+  { key: "saturday", label: "السبت" }
+];
+const weekdayLabel = key => WEEKDAYS.find(day => day.key === key)?.label || key || "";
+
 function saveProfile() {
   localStorage.setItem(STORAGE_PROFILE, JSON.stringify(profile));
 }
@@ -86,6 +95,7 @@ async function showApp() {
 
   try {
     await loadGroups();
+    await loadReminderPreference();
     await loadBookings();
     await loadDailyBookingLimit();
     await refreshNotifications(false);
@@ -217,7 +227,7 @@ async function loadGroups() {
     id: Number(g.id),
     teacherId: g.teacher_id,
     name: g.name,
-    day: g.weekday === "friday" ? "الجمعة" : "السبت",
+    day: weekdayLabel(g.weekday),
     dayKey: g.weekday,
     start: g.start_time,
     end: g.end_time,
@@ -252,7 +262,7 @@ async function loadBookings() {
     id: b.id,
     groupId: Number(b.group_id),
     sessionDate: b.session_date,
-    day: b.weekday === "friday" ? "الجمعة" : "السبت",
+    day: weekdayLabel(b.weekday),
     start: b.start_time,
     end: b.end_time,
     price: Number(b.price_dzd),
@@ -266,139 +276,94 @@ async function loadBookings() {
 async function loadDailyBookingLimit() {
   dailyBookingLimit = await api("/api/bookings/daily-limit");
   const status = $("dailyBookingLimit");
-  if (status) {
-    status.textContent = `سجلت اليوم في ${dailyBookingLimit.used} من أصل 3 أفواج · المتبقي ${dailyBookingLimit.remaining}`;
-  }
+  if (status) status.textContent = `سجلت اليوم في ${dailyBookingLimit.used} من أصل 3 أفواج · المتبقي ${dailyBookingLimit.remaining}`;
 }
 
-// التحقق من نافذة التسجيل حسب توقيت الجزائر.
-// التسجيل متاح يومي الجمعة والسبت من 07:30 إلى ما قبل 16:00.
-function isRegistrationWindowOpen() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Africa/Algiers",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
+function algeriaClock() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Algiers", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23"
   }).formatToParts(new Date());
+  return Object.fromEntries(parts.filter(p => p.type !== "literal").map(p => [p.type, p.value]));
+}
 
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
-  const isAllowedDay = values.weekday === "Fri" || values.weekday === "Sat";
-  const currentMinutes = Number(values.hour) * 60 + Number(values.minute);
+function nextSessionDate(group) {
+  const now = algeriaClock();
+  const [year, month, day] = [Number(now.year), Number(now.month), Number(now.day)];
+  const current = new Date(Date.UTC(year, month - 1, day, 12));
+  const wantedDay = WEEKDAYS.findIndex(item => item.key === group.dayKey);
+  let difference = (wantedDay - current.getUTCDay() + 7) % 7;
+  const currentMinutes = Number(now.hour) * 60 + Number(now.minute);
+  const endMinutes = Number(group.end.slice(0, 2)) * 60 + Number(group.end.slice(3, 5));
+  if (difference === 0 && currentMinutes >= endMinutes) difference = 7;
+  current.setUTCDate(current.getUTCDate() + difference);
+  return current.toISOString().slice(0, 10);
+}
 
-  return isAllowedDay && currentMinutes >= 7 * 60 + 30 && currentMinutes < 16 * 60;
+function registrationState(group) {
+  const now = algeriaClock();
+  const today = `${now.year}-${now.month}-${now.day}`;
+  const sessionDate = nextSessionDate(group);
+  if (sessionDate !== today) return { open: false, label: "يفتح قبل الحصة بساعة" };
+  const currentMinutes = Number(now.hour) * 60 + Number(now.minute);
+  const startMinutes = Number(group.start.slice(0, 2)) * 60 + Number(group.start.slice(3, 5));
+  const endMinutes = Number(group.end.slice(0, 2)) * 60 + Number(group.end.slice(3, 5));
+  const opensAt = Math.max(0, startMinutes - 60);
+  if (currentMinutes < opensAt) return { open: false, label: `يفتح ${String(Math.floor(opensAt/60)).padStart(2,"0")}:${String(opensAt%60).padStart(2,"0")}` };
+  if (currentMinutes >= endMinutes) return { open: false, label: "انتهى التسجيل" };
+  return { open: true, label: "اشترك في الحصة" };
 }
 
 function renderGroups() {
-  const makeDayContent = dayGroups => {
+  const container = $("groupsByDay") || $("fridayGroups")?.parentElement;
+  if (!container) return;
+  const sections = WEEKDAYS.map(day => {
+    const dayGroups = groups.filter(g => g.dayKey === day.key);
+    if (!dayGroups.length) return "";
     const buckets = new Map();
     dayGroups.forEach(group => {
       const key = `${group.teacherName}|||${group.subject}`;
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push(group);
     });
-    return [...buckets.entries()].map(([key, teacherGroups]) => {
+    const teacherSections = [...buckets.entries()].map(([key, teacherGroups]) => {
       const [teacherName, subject] = key.split("|||");
       const cards = teacherGroups.map(g => {
-        const alreadyBooked = bookings.some(
-          b => b.groupId === g.id && b.sessionDate === nextSessionDate(g) && b.status !== "cancelled"
-        );
-        const windowOpen = isRegistrationWindowOpen();
-        const unavailableReason = !windowOpen ? "التسجيل مغلق حالياً" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : "اشترك في الحصة");
+        const sessionDate = nextSessionDate(g);
+        const alreadyBooked = bookings.some(b => b.groupId === g.id && b.sessionDate === sessionDate && b.status !== "cancelled");
+        const state = registrationState(g);
+        const canJoin = state.open && !alreadyBooked && dailyBookingLimit.remaining > 0;
+        const buttonLabel = alreadyBooked ? "تم التسجيل" : (dailyBookingLimit.remaining <= 0 ? "اكتمل حد اليوم" : state.label);
         return `<article class="group-card">
-          <div class="group-top"><span class="group-number">الفوج ${g.id}</span><span class="group-day">${g.day}</span></div>
+          <div class="group-top"><span class="group-number">الفوج ${g.id}</span><span class="group-day">${day.label}</span></div>
           <h4>${escapeHtml(g.name || `الفوج ${g.id}`)}</h4>
           <div class="group-time">◷ ${g.start} — ${g.end}</div>
-          <div class="group-bottom">
-            <div class="price">${g.price}<small>دج / الحصة</small></div>
-            <button class="join-button" data-join="${g.id}" ${(alreadyBooked || dailyBookingLimit.remaining <= 0 || !windowOpen) ? "disabled" : ""}>
-              ${alreadyBooked ? "تم التسجيل" : unavailableReason}
-            </button>
+          <div class="group-bottom"><div class="price">${g.price}<small>دج / الحصة</small></div>
+            <button class="join-button" data-join="${g.id}" ${canJoin ? "" : "disabled"}>${buttonLabel}</button>
           </div>
         </article>`;
       }).join("");
-      return `<section class="teacher-group-section">
-        <div class="teacher-group-heading"><h4>${escapeHtml(teacherName)}</h4><span>${escapeHtml(subject || "المادة غير محددة")}</span></div>
-        <div class="groups-grid">${cards}</div>
-      </section>`;
-    }).join("") || '<p class="empty-hint">لا توجد أفواج متاحة حالياً.</p>';
-  };
-  $("fridayGroups").innerHTML = makeDayContent(groups.filter(g => g.dayKey === "friday"));
-  $("saturdayGroups").innerHTML = makeDayContent(groups.filter(g => g.dayKey === "saturday"));
-  document.querySelectorAll("[data-join]").forEach(btn => {
-    btn.addEventListener("click", () => joinGroup(Number(btn.dataset.join)));
-  });
+      return `<section class="teacher-group-section"><div class="teacher-group-heading"><h4>${escapeHtml(teacherName)}</h4><span>${escapeHtml(subject || "المادة غير محددة")}</span></div><div class="groups-grid">${cards}</div></section>`;
+    }).join("");
+    return `<section class="weekday-section"><div class="group-day-title"><span>${day.label}</span><span class="day-line"></span></div>${teacherSections}</section>`;
+  }).join("");
+  container.innerHTML = sections || '<p class="empty-hint">لا توجد أفواج متاحة حالياً.</p>';
+  container.querySelectorAll("[data-join]").forEach(btn => btn.addEventListener("click", () => joinGroup(Number(btn.dataset.join))));
 }
 
-// حساب أقرب تاريخ قادم يوافق يوم الفوج
-function nextSessionDate(group) {
-  const now = new Date();
-
-  const algeriaDate = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Africa/Algiers",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(now);
-
-  const [year, month, day] = algeriaDate.split("-").map(Number);
-  const current = new Date(Date.UTC(year, month - 1, day, 12));
-
-  const wantedDay = group.dayKey === "friday" ? 5 : 6;
-  let difference = (wantedDay - current.getUTCDay() + 7) % 7;
-
-  const timeParts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Africa/Algiers",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(now);
-
-  const time = Object.fromEntries(
-    timeParts.filter(p => p.type !== "literal").map(p => [p.type, p.value])
-  );
-
-  const currentMinutes = Number(time.hour) * 60 + Number(time.minute);
-  const startMinutes =
-    Number(group.start.slice(0, 2)) * 60 +
-    Number(group.start.slice(3, 5));
-
-  if (difference === 0 && startMinutes <= currentMinutes) {
-    difference = 7;
-  }
-
-  current.setUTCDate(current.getUTCDate() + difference);
-  return current.toISOString().slice(0, 10);
-}
-
-// التسجيل الحقيقي في السيرفر
 async function joinGroup(id) {
   const group = groups.find(g => g.id === id);
   if (!group) return;
-
   const btn = document.querySelector(`[data-join="${id}"]`);
   if (btn) btn.disabled = true;
-
   try {
     const sessionDate = nextSessionDate(group);
-
-    await api("/api/bookings", {
-      method: "POST",
-      body: JSON.stringify({
-        group_id: id,
-        session_date: sessionDate
-      })
-    });
-
+    await api("/api/bookings", { method: "POST", body: JSON.stringify({ group_id: id, session_date: sessionDate }) });
     await loadBookings();
     await loadDailyBookingLimit();
     scheduleSessionReminders();
-    renderGroups();
-    renderBookings();
-    renderStats();
-
-    showToast(`تم تسجيلك بنجاح في الفوج ${id}.`);
-
+    renderGroups(); renderBookings(); renderStats();
+    showToast("تم تسجيلك بنجاح!");
   } catch (error) {
     showToast(error.message);
     if (btn) btn.disabled = false;
@@ -485,6 +450,14 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(char => char.charCodeAt(0)));
 }
 
+async function loadReminderPreference() {
+  try {
+    const data = await api("/api/student/reminder-preference");
+    const select = $("reminderMinutes");
+    if (select) select.value = String(data.reminder_minutes || 30);
+  } catch (error) { console.warn("تعذر تحميل إعداد التذكير:", error); }
+}
+
 async function enableRealPushNotifications() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !window.isSecureContext) {
     throw new Error("هذا المتصفح لا يدعم الإشعارات الفورية أو أن الموقع ليس HTTPS.");
@@ -533,7 +506,9 @@ $("reminderToggle").addEventListener("change", async (event) => {
     if (enabled) {
       await enableRealPushNotifications();
       localStorage.setItem(STORAGE_REMINDER, "true");
-      showToast("تم تفعيل الإشعارات الفورية وتذكير الحصة قبل 30 دقيقة.");
+      const reminderMinutes = Number($("reminderMinutes")?.value || 30);
+      await api("/api/student/reminder-preference", { method: "POST", body: JSON.stringify({ reminder_minutes: reminderMinutes }) });
+      showToast(`تم تفعيل التذكير قبل ${reminderMinutes} دقيقة.`);
     } else {
       await disableRealPushNotifications();
       localStorage.setItem(STORAGE_REMINDER, "false");
@@ -545,6 +520,14 @@ $("reminderToggle").addEventListener("change", async (event) => {
   } finally {
     event.target.disabled = false;
   }
+});
+
+$("reminderMinutes")?.addEventListener("change", async event => {
+  const minutes = Number(event.target.value);
+  try {
+    await api("/api/student/reminder-preference", { method: "POST", body: JSON.stringify({ reminder_minutes: minutes }) });
+    showToast(`تم ضبط التذكير قبل ${minutes} دقيقة.`);
+  } catch (error) { showToast(error.message); }
 });
 
 async function refreshNotifications(announceNew = false) {
