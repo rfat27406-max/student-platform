@@ -180,3 +180,55 @@
     max-height: 180px;
   }
 }
+
+
+
+/* ===== Fixed teacher-name typography ===== */
+/* Teacher name in the teacher profile card */
+.teacher-info h3 {
+  font-size: 13px !important;
+  line-height: 1.5;
+  font-weight: 700;
+  margin: 0 0 5px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Teacher name in each teacher/group section heading */
+.teacher-group-heading h4 {
+  font-size: 14px !important;
+  line-height: 1.5;
+  font-weight: 700;
+  max-width: min(100%, 260px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Teacher name shown inside a group card */
+.group-card .group-teacher {
+  font-size: 11px !important;
+  line-height: 1.5;
+  font-weight: 500;
+  max-height: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep the same typography on smaller screens */
+@media (max-width: 760px) {
+  .teacher-info h3 {
+    font-size: 12px !important;
+  }
+
+  .teacher-group-heading h4 {
+    font-size: 13px !important;
+  }
+
+  .group-card .group-teacher {
+    font-size: 11px !important;
+  }
+}
