@@ -1,4 +1,3 @@
-
 const API_BASE = "https://school-server.rfat27406.workers.dev";
 
 const STORAGE_PROFILE = "madrasati_student_profile_v1";
@@ -270,6 +269,24 @@ async function loadDailyBookingLimit() {
   if (status) {
     status.textContent = `سجلت اليوم في ${dailyBookingLimit.used} من أصل 3 أفواج · المتبقي ${dailyBookingLimit.remaining}`;
   }
+}
+
+// التحقق من نافذة التسجيل حسب توقيت الجزائر.
+// التسجيل متاح يومي الجمعة والسبت من 07:30 إلى ما قبل 16:00.
+function isRegistrationWindowOpen() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Algiers",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  const isAllowedDay = values.weekday === "Fri" || values.weekday === "Sat";
+  const currentMinutes = Number(values.hour) * 60 + Number(values.minute);
+
+  return isAllowedDay && currentMinutes >= 7 * 60 + 30 && currentMinutes < 16 * 60;
 }
 
 function renderGroups() {
