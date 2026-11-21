@@ -4,8 +4,8 @@ self.addEventListener("push", event => {
   const title = payload.title || "إشعار جديد";
   const options = {
     body: payload.body || "لديك تحديث جديد في المنصة.",
-    icon: "/favicon.ico",
-    badge: "/favicon.ico",
+    icon: "/logo.jpg",
+    badge: "/logo.jpg",
     tag: payload.tag || `school-${Date.now()}`,
     renotify: true,
     requireInteraction: payload.kind === "lesson-reminder",
