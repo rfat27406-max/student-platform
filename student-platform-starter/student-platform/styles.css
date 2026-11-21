@@ -92,3 +92,91 @@
     padding: 16px;
   }
 }
+
+
+/* ===== Madrassati: uniform group-card dimensions ===== */
+.teacher-group-section .groups-grid,
+.groups-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 320px));
+  justify-content: start;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.teacher-group-section .group-card,
+.groups-grid > .group-card {
+  width: 100%;
+  min-width: 0;
+  height: 190px;
+  min-height: 190px;
+  max-height: 190px;
+  display: flex;
+  flex-direction: column;
+  padding: 17px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.group-card .group-top {
+  flex: 0 0 auto;
+  min-height: 28px;
+}
+
+.group-card h4 {
+  margin: 12px 0 5px;
+  line-height: 1.5;
+  min-height: 23px;
+}
+
+.group-card .group-time,
+.group-card .group-teacher {
+  line-height: 1.6;
+  max-height: 38px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-card .group-bottom {
+  margin-top: auto;
+  min-height: 42px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-card .price {
+  white-space: nowrap;
+}
+
+.group-card .join-button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Tablet: slightly narrower cards, same height */
+@media (min-width: 761px) and (max-width: 1050px) {
+  .teacher-group-section .groups-grid,
+  .groups-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 300px));
+    gap: 14px;
+  }
+}
+
+/* Mobile: one full-width card per row */
+@media (max-width: 760px) {
+  .teacher-group-section .groups-grid,
+  .groups-grid {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    gap: 12px;
+  }
+
+  .teacher-group-section .group-card,
+  .groups-grid > .group-card {
+    width: 100%;
+    height: 180px;
+    min-height: 180px;
+    max-height: 180px;
+  }
+}
